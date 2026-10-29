@@ -44,3 +44,9 @@ A bare-metal implementation of the Controller Area Network (CAN 2.0B) protocol.
 2. Create a new project in `TM4C123/` targeting **`TM4C123GH6PM`**.
 3. In the Run-Time Environment (RTE) manager, include only **`CMSIS::CORE`** and **`Device::Startup`** (`startup_TM4C123.s` and `system_TM4C123.c`—no peripheral driver libraries).
 4. Set the debug and flash probe to **Stellaris ICDI** under *Target Options $\rightarrow$ Debug / Utilities*.
+
+# My Notes
+## Registers
+DPORT_PERIP_CLK_EN_REG = 00...
+
+DPORT_PERIP_RST_EN_REG = 11...
