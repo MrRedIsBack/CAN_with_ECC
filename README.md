@@ -97,6 +97,12 @@ For 0_REG, we can configure the BAUD rate (TWAI_BAUD_PRESC) and the Synchronizat
 
 For 1_REG, we can configure some other things, but more interestingly, the sample method! In this project we chose triple sampling (`bus_timing_1_reg.sam = 1`).
 
+And then we want to configure the acceptance filters.
+
+Lastly, we can send a packet!!
+
+Use `tx_rx_buffer[].byte`.
+
 ## TM4C123 Stuff
 
 ## General

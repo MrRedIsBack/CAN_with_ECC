@@ -30,10 +30,10 @@ void app_main(void)
     PIN_INPUT_ENABLE(IO_MUX_GPIO22_REG);
     
     // Output Enable the GPIO Pins
-    GPIO.enable_w1tc = GPIO_RX_PIN; // turns on GPIO22 - RX - input enable
-    GPIO.enable_w1ts = GPIO_TX_PIN; // turns on GPIO21 - TX - output enable
+    GPIO.enable_w1tc = GPIO_RX_BIT; // turns on GPIO22 - RX - input enable
+    GPIO.enable_w1ts = GPIO_TX_BIT; // turns on GPIO21 - TX - output enable
 
-    GPIO.func_out_sel_cfg[GPIO_TX_BIT].func_sel = 123; // Set GPIO21 to output the CAN TX signal (index 123)
+    GPIO.func_out_sel_cfg[GPIO_TX_PIN].func_sel = 123; // Set GPIO21 to output the CAN TX signal (index 123)
     GPIO.func_in_sel_cfg[TWAI_RX_IDX].func_sel = GPIO_RX_PIN; // Set the CAN RX signal (index 94) to be input for GPIO22
     GPIO.func_in_sel_cfg[TWAI_RX_IDX].sig_in_sel = 1; // Bypass the IO matrix for GPIO22 input
 
@@ -67,6 +67,32 @@ void app_main(void)
     TWAI.acceptance_filter.acr[2].byte = 0x00; 
     TWAI.acceptance_filter.acr[3].byte = 0x00; 
 
+    // Enter self test mode
+    TWAI.mode_reg.stm = 1;
+
     // Clear the Reset Mode bit in the mode
-    TWAI.mode_reg.rm = 0; 
+    TWAI.mode_reg.rm = 0;
+
+    // Wait until Transmit Buffer Status is 1
+    while (TWAI.status_reg.tbs != 1) {}
+    printf("Passed TBS!\n");
+
+    // Send some data!
+    // Standard Frame Format
+    // Data Frame
+    // 1 byte for DLC
+    TWAI.tx_rx_buffer[0].byte = 0x01;
+
+    // ID - 0101 0111 100
+    TWAI.tx_rx_buffer[1].byte = 0x57; // 0101 0111
+    TWAI.tx_rx_buffer[2].byte = 0x80; // 1000 000
+
+    // Our actual data to send
+    TWAI.tx_rx_buffer[3].byte = 0x5; // 0101
+    TWAI.command_reg.srr = 1; // Self Reception Request
+
+    while (TWAI.status_reg.rbs == 0) {}
+
+    printf("tx_rx_buffer[3].byte: %d \n", TWAI.tx_rx_buffer[3].byte);
+    TWAI.command_reg.rrb = 1; // Release Receive Buffer
 }
