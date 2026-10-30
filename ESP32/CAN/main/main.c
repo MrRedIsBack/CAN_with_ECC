@@ -6,6 +6,9 @@
 #include "soc/io_mux_reg.h"  // The memory-mapped C struct (IO_MUX) for the GPIO peripheral
 #include "soc/gpio_sig_map.h" 
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include <inttypes.h>
 
 #define CAN_CLK_EN_BIT (1U << 19)
@@ -16,8 +19,7 @@
 #define GPIO_TX_BIT (1U << GPIO_TX_PIN)
 #define GPIO_RX_BIT (1U << GPIO_RX_PIN)
 
-void app_main(void)
-{
+void app_main(void) {
     *(volatile uint32_t *)DPORT_PERIP_CLK_EN_REG |= CAN_CLK_EN_BIT;  // Enable the clock for the CAN peripheral
     *(volatile uint32_t *)DPORT_PERIP_RST_EN_REG &= ~CAN_RST_BIT;      // Reset the CAN peripheral
 
@@ -67,32 +69,28 @@ void app_main(void)
     TWAI.acceptance_filter.acr[2].byte = 0x00; 
     TWAI.acceptance_filter.acr[3].byte = 0x00; 
 
-    // Enter self test mode
-    TWAI.mode_reg.stm = 1;
-
     // Clear the Reset Mode bit in the mode
     TWAI.mode_reg.rm = 0;
 
-    // Wait until Transmit Buffer Status is 1
-    while (TWAI.status_reg.tbs != 1) {}
-    printf("Passed TBS!\n");
+    while(1) {
+        // Wait until Transmit Buffer Status is 1
+        while (TWAI.status_reg.tbs != 1) {}
+        printf("Passed TBS!\n");
 
-    // Send some data!
-    // Standard Frame Format
-    // Data Frame
-    // 1 byte for DLC
-    TWAI.tx_rx_buffer[0].byte = 0x01;
+        // Send some data!
+        // Standard Frame Format
+        // Data Frame
+        // 1 byte for DLC
+        TWAI.tx_rx_buffer[0].byte = 0x01;
 
-    // ID - 0101 0111 100
-    TWAI.tx_rx_buffer[1].byte = 0x57; // 0101 0111
-    TWAI.tx_rx_buffer[2].byte = 0x80; // 1000 000
+        // ID - 0101 0111 100
+        TWAI.tx_rx_buffer[1].byte = 0x57; // 0101 0111
+        TWAI.tx_rx_buffer[2].byte = 0x80; // 1000 000
 
-    // Our actual data to send
-    TWAI.tx_rx_buffer[3].byte = 0x5; // 0101
-    TWAI.command_reg.srr = 1; // Self Reception Request
+        // Our actual data to send
+        TWAI.tx_rx_buffer[3].byte = 0x5; // 0101
+        TWAI.command_reg.tr = 1; // Transmission Request
 
-    while (TWAI.status_reg.rbs == 0) {}
-
-    printf("tx_rx_buffer[3].byte: %d \n", TWAI.tx_rx_buffer[3].byte);
-    TWAI.command_reg.rrb = 1; // Release Receive Buffer
+        vTaskDelay(pdMS_TO_TICKS(1000)); // delay of 1s
+    }
 }
