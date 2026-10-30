@@ -83,6 +83,20 @@ Then lastly you need to map the GPIO pin to the right index
 
 `GPIO.func_out_sel_cfg[21].func_sel = 123; // Set GPIO21 to output the CAN TX signal (index 123)`
 
+### Milestone 3: Configure the TWAI Registers (While in Reset Mode)
+
+Reset Mode is a state where the controller is electrically and logically disconnected from the TWAI bus.
+
+Firstly, we enter reset mode and also enter extended mode.
+
+Extended Mode switches the TWAI hardware from a 1980s legacy register layout (Basic Mode / BasicCAN) to the modern CAN 2.0B register architecture.
+
+Then, we want to configure our BAUD rate. Use TWAI_BUS_TIMING_0_REG and TWAI_BUS_TIMING_1_REG.
+
+For 0_REG, we can configure the BAUD rate (TWAI_BAUD_PRESC) and the Synchronization Jump Width. Need to find out what exactly the jump width is later.
+
+For 1_REG, we can configure some other things, but more interestingly, the sample method! In this project we chose triple sampling (`bus_timing_1_reg.sam = 1`).
+
 ## TM4C123 Stuff
 
 ## General

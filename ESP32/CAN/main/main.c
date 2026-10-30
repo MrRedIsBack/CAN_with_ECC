@@ -11,8 +11,10 @@
 #define CAN_CLK_EN_BIT (1U << 19)
 #define CAN_RST_BIT (1U << 19)
 
-#define GPIO_RX_BIT 22
-#define GPIO_TX_BIT 21
+#define GPIO_TX_PIN 21
+#define GPIO_RX_PIN 22
+#define GPIO_TX_BIT (1U << GPIO_TX_PIN)
+#define GPIO_RX_BIT (1U << GPIO_RX_PIN)
 
 void app_main(void)
 {
@@ -28,10 +30,43 @@ void app_main(void)
     PIN_INPUT_ENABLE(IO_MUX_GPIO22_REG);
     
     // Output Enable the GPIO Pins
-    GPIO.enable_w1tc = (1U << GPIO_RX_BIT); // turns on GPIO22 - RX - input enable
-    GPIO.enable_w1ts = (1U << GPIO_TX_BIT); // turns on GPIO21 - TX - output enable
+    GPIO.enable_w1tc = GPIO_RX_PIN; // turns on GPIO22 - RX - input enable
+    GPIO.enable_w1ts = GPIO_TX_PIN; // turns on GPIO21 - TX - output enable
 
     GPIO.func_out_sel_cfg[GPIO_TX_BIT].func_sel = 123; // Set GPIO21 to output the CAN TX signal (index 123)
-    GPIO.func_in_sel_cfg[TWAI_RX_IDX].func_sel = GPIO_RX_BIT; // Set the CAN RX signal (index 94) to be input for GPIO22
+    GPIO.func_in_sel_cfg[TWAI_RX_IDX].func_sel = GPIO_RX_PIN; // Set the CAN RX signal (index 94) to be input for GPIO22
     GPIO.func_in_sel_cfg[TWAI_RX_IDX].sig_in_sel = 1; // Bypass the IO matrix for GPIO22 input
+
+    // Set the Reset Mode bit in the mode
+    TWAI.mode_reg.rm = 1;
+
+    // Set the register layout to extended
+    TWAI.clock_divider_reg.cm = 1;
+    TWAI.clock_divider_reg.co = 1; // Disable the clock output
+
+    // Configure BAUD rate to 500 kbps and Synchronization Jump Width to 3Tq wide
+    TWAI.bus_timing_0_reg.brp = 0x03;
+    TWAI.bus_timing_0_reg.sjw = 0x2;
+
+    TWAI.bus_timing_1_reg.tseg1 = 0xE;
+    TWAI.bus_timing_1_reg.tseg2 = 0x3;
+    TWAI.bus_timing_1_reg.sam = 1; // Triple sampling
+
+    // Turn on single filter mode
+    TWAI.mode_reg.afm = 1;
+
+    // Set the acceptance bit mask to 1 so that everything is accepted
+    TWAI.acceptance_filter.amr[0].byte = 0xFF; 
+    TWAI.acceptance_filter.amr[1].byte = 0xFF; 
+    TWAI.acceptance_filter.amr[2].byte = 0xFF; 
+    TWAI.acceptance_filter.amr[3].byte = 0xFF; 
+
+    // Set the acceptance code to 0
+    TWAI.acceptance_filter.acr[0].byte = 0x00; 
+    TWAI.acceptance_filter.acr[1].byte = 0x00; 
+    TWAI.acceptance_filter.acr[2].byte = 0x00; 
+    TWAI.acceptance_filter.acr[3].byte = 0x00; 
+
+    // Clear the Reset Mode bit in the mode
+    TWAI.mode_reg.rm = 0; 
 }
