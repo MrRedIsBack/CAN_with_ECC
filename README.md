@@ -45,6 +45,8 @@ A bare-metal implementation of the Controller Area Network (CAN 2.0B) protocol.
 3. In the Run-Time Environment (RTE) manager, include only **`CMSIS::CORE`** and **`Device::Startup`** (`startup_TM4C123.s` and `system_TM4C123.c`—no peripheral driver libraries).
 4. Set the debug and flash probe to **Stellaris ICDI** under *Target Options $\rightarrow$ Debug / Utilities*.
 
+The extra files and whatever that need to be downloaded to set up the board were stolen from Quantum Leaps - Modern Embedded Systems Programming series so god knows how to set everything up again. Good luck.
+
 # My Notes
 
 ## ESP32 Stuff
@@ -104,6 +106,20 @@ Lastly, we can send a packet!!
 Use `tx_rx_buffer[].byte`.
 
 ## TM4C123 Stuff
+
+RX - PB4 and TX - PB5
+
+PB4 and PB5 are wired strictly to CAN0Rx and CAN0Tx (Module 0).
+
+### Milestone 1: Clocks & GPIO Pin Muxing
+
+Woke up the CAN0 hardware and connected it physically to pins PB4 and PB5 on the chip.
+
+### Milestone 2: CAN Initialization & 500 kbps Bit Timing
+
+### Milestone 3: Configure Message Object 1 as a Receiver (via IF1 or IF2)
+
+### Milestone 4: Poll for New Data and Read the Byte
 
 ## General
 
