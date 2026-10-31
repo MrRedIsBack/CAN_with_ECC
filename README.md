@@ -117,6 +117,8 @@ Woke up the CAN0 hardware and connected it physically to pins PB4 and PB5 on the
 
 ### Milestone 2: CAN Initialization & 500 kbps Bit Timing
 
+Use same values as ESP32.
+
 ### Milestone 3: Configure Message Object 1 as a Receiver (via IF1 or IF2)
 
 ### Milestone 4: Poll for New Data and Read the Byte
