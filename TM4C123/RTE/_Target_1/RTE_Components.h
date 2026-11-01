@@ -15,6 +15,9 @@
  */
 #define CMSIS_device_header "TM4C123.h"
 
+/* ARM::CMSIS-Compiler:STDOUT:ITM@1.1.0 */
+#define RTE_CMSIS_Compiler_STDOUT                /* CMSIS-Compiler STDOUT */
+#define RTE_CMSIS_Compiler_STDOUT_ITM            /* CMSIS-Compiler STDOUT: ITM */
 
 
 #endif /* RTE_COMPONENTS_H */

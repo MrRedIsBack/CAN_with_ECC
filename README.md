@@ -121,6 +121,8 @@ Use same values as ESP32.
 
 ### Milestone 3: Configure Message Object 1 as a Receiver (via IF1 or IF2)
 
+Interface Registers: IF1 for setup/transmit or IF2 for receive
+
 ### Milestone 4: Poll for New Data and Read the Byte
 
 ## General

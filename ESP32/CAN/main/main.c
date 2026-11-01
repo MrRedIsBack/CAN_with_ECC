@@ -1,18 +1,17 @@
 #include <stdio.h>
+#include <inttypes.h>
 
-#include "soc/twai_struct.h"   // The memory-mapped C struct (TWAI) for the CAN peripheral
-#include "soc/dport_reg.h"     // System clock gating and hardware reset registers
-#include "soc/gpio_struct.h"    // The memory-mapped C struct (GPIO) for the GPIO peripheral
-#include "soc/io_mux_reg.h"  // The memory-mapped C struct (IO_MUX) for the GPIO peripheral
-#include "soc/gpio_sig_map.h" 
+#include "soc/twai_struct.h"
+#include "soc/dport_reg.h"
+#include "soc/gpio_struct.h"
+#include "soc/io_mux_reg.h"
+#include "soc/gpio_sig_map.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <inttypes.h>
-
 #define CAN_CLK_EN_BIT (1U << 19)
-#define CAN_RST_BIT (1U << 19)
+#define CAN_RST_BIT    (1U << 19)
 
 #define GPIO_TX_PIN 21
 #define GPIO_RX_PIN 22
@@ -20,77 +19,67 @@
 #define GPIO_RX_BIT (1U << GPIO_RX_PIN)
 
 void app_main(void) {
-    *(volatile uint32_t *)DPORT_PERIP_CLK_EN_REG |= CAN_CLK_EN_BIT;  // Enable the clock for the CAN peripheral
-    *(volatile uint32_t *)DPORT_PERIP_RST_EN_REG &= ~CAN_RST_BIT;      // Reset the CAN peripheral
+    // 1. Enable and reset TWAI peripheral using safe DPORT macros
+    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, CAN_CLK_EN_BIT);
+    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, CAN_RST_BIT);
+    DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, CAN_RST_BIT);
 
-    printf("mod_reg Value: %" PRIu32 "\n", TWAI.mode_reg.val);
-    printf("The above value should be 33, if it is not, then you are fucked, good luck. \n");
-
-    // No clue what these 3 lines are doing
-    PIN_FUNC_SELECT(IO_MUX_GPIO21_REG, FUNC_GPIO21_GPIO21);
-    PIN_FUNC_SELECT(IO_MUX_GPIO22_REG, FUNC_GPIO22_GPIO22);
+    // 2. Bare-metal GPIO21 (TX) and GPIO22 (RX) configuration
+    PIN_FUNC_SELECT(IO_MUX_GPIO21_REG, PIN_FUNC_GPIO);
+    PIN_FUNC_SELECT(IO_MUX_GPIO22_REG, PIN_FUNC_GPIO);
     PIN_INPUT_ENABLE(IO_MUX_GPIO22_REG);
-    
-    // Output Enable the GPIO Pins
-    GPIO.enable_w1tc = GPIO_RX_BIT; // turns on GPIO22 - RX - input enable
-    GPIO.enable_w1ts = GPIO_TX_BIT; // turns on GPIO21 - TX - output enable
+    REG_SET_BIT(IO_MUX_GPIO22_REG, FUN_PU); // Enable internal pull-up on RX
 
-    GPIO.func_out_sel_cfg[GPIO_TX_PIN].func_sel = 123; // Set GPIO21 to output the CAN TX signal (index 123)
-    GPIO.func_in_sel_cfg[TWAI_RX_IDX].func_sel = GPIO_RX_PIN; // Set the CAN RX signal (index 94) to be input for GPIO22
-    GPIO.func_in_sel_cfg[TWAI_RX_IDX].sig_in_sel = 1; // Bypass the IO matrix for GPIO22 input
+    GPIO.enable_w1tc = GPIO_RX_BIT; // GPIO22 as input
+    GPIO.enable_w1ts = GPIO_TX_BIT; // GPIO21 as output
 
-    // Set the Reset Mode bit in the mode
-    TWAI.mode_reg.rm = 1;
+    // Route TX through GPIO matrix and force Output Enable from GPIO.enable register
+    GPIO.pin[GPIO_TX_PIN].pad_driver = 0; // Push-pull output
+    GPIO.func_out_sel_cfg[GPIO_TX_PIN].func_sel = TWAI_TX_IDX;
+    GPIO.func_out_sel_cfg[GPIO_TX_PIN].inv_sel = 0;
+    GPIO.func_out_sel_cfg[GPIO_TX_PIN].oen_sel = 1; // Use GPIO.enable_w1ts to enable output
 
-    // Set the register layout to extended
-    TWAI.clock_divider_reg.cm = 1;
-    TWAI.clock_divider_reg.co = 1; // Disable the clock output
+    // Route RX through GPIO matrix
+    GPIO.func_in_sel_cfg[TWAI_RX_IDX].func_sel = GPIO_RX_PIN;
+    GPIO.func_in_sel_cfg[TWAI_RX_IDX].sig_in_inv = 0;
+    GPIO.func_in_sel_cfg[TWAI_RX_IDX].sig_in_sel = 1;
 
-    // Configure BAUD rate to 500 kbps and Synchronization Jump Width to 3Tq wide
-    TWAI.bus_timing_0_reg.brp = 0x03;
-    TWAI.bus_timing_0_reg.sjw = 0x2;
+    // 3. Enter Reset Mode (rm = 1) + Single Acceptance Filter Mode (afm = 1)
+    TWAI.mode_reg.val = (1U << 0) | (1U << 3);
 
-    TWAI.bus_timing_1_reg.tseg1 = 0xE;
-    TWAI.bus_timing_1_reg.tseg2 = 0x3;
-    TWAI.bus_timing_1_reg.sam = 1; // Triple sampling
+    // 4. Pelican/Extended register layout (cm = 1) & disable clock out (co = 1)
+    TWAI.clock_divider_reg.val = (1U << 7) | (1U << 3);
 
-    // Turn on single filter mode
-    TWAI.mode_reg.afm = 1;
+    // Direct .val writes so ESP-IDF v6.1 bitfield shifts cannot corrupt BTR0 or BTR1!
+    TWAI.bus_timing_0_reg.val = 0x43; // SJW=1, BRP=3 -> 10 MHz Tq clock
+    TWAI.bus_timing_1_reg.val = 0x2F; // SAM=0, TSEG2=2 (3 Tq), TSEG1=15 (16 Tq) -> 20 Tq total = 500 kbps
 
-    // Set the acceptance bit mask to 1 so that everything is accepted
-    TWAI.acceptance_filter.amr[0].byte = 0xFF; 
-    TWAI.acceptance_filter.amr[1].byte = 0xFF; 
-    TWAI.acceptance_filter.amr[2].byte = 0xFF; 
-    TWAI.acceptance_filter.amr[3].byte = 0xFF; 
+    // 6. Acceptance filter: accept all messages
+    for (int i = 0; i < 4; i++) {
+        TWAI.acceptance_filter.acr[i].val = 0x00;
+        TWAI.acceptance_filter.amr[i].val = 0xFF;
+    }
 
-    // Set the acceptance code to 0
-    TWAI.acceptance_filter.acr[0].byte = 0x00; 
-    TWAI.acceptance_filter.acr[1].byte = 0x00; 
-    TWAI.acceptance_filter.acr[2].byte = 0x00; 
-    TWAI.acceptance_filter.acr[3].byte = 0x00; 
+    // 7. Clear any pending interrupts and exit Reset Mode (rm = 0, afm = 1)
+    (void)TWAI.interrupt_reg.val;
+    TWAI.mode_reg.val = (1U << 2) | (1U << 3);
 
-    // Clear the Reset Mode bit in the mode
-    TWAI.mode_reg.rm = 0;
+    while (1) {
+        if (TWAI.status_reg.tbs == 0) {
+            TWAI.command_reg.val = (1U << 4); // Abort stuck transmission if any (AT = 1)
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
 
-    while(1) {
-        // Wait until Transmit Buffer Status is 1
-        while (TWAI.status_reg.tbs != 1) {}
-        printf("Passed TBS!\n");
+        // Standard Data Frame, ID = 0x2BC, DLC = 1, Data[0] = 0x05
+        TWAI.tx_rx_buffer[0].val = 0x01; // FF=0 (Std), RTR=0 (Data), DLC=1
+        TWAI.tx_rx_buffer[1].val = 0x57; // ID[10:3] of 0x2BC (0x2BC >> 3 = 0x57)
+        TWAI.tx_rx_buffer[2].val = 0x80; // ID[2:0] of 0x2BC ((0x2BC & 0x07) << 5 = 0x80)
+        TWAI.tx_rx_buffer[3].val = 0x05; // Data byte 0
 
-        // Send some data!
-        // Standard Frame Format
-        // Data Frame
-        // 1 byte for DLC
-        TWAI.tx_rx_buffer[0].byte = 0x01;
+        TWAI.command_reg.val = (1U << 0); // Normal Transmission Request (TR = 1)
 
-        // ID - 0101 0111 100
-        TWAI.tx_rx_buffer[1].byte = 0x57; // 0101 0111
-        TWAI.tx_rx_buffer[2].byte = 0x80; // 1000 000
-
-        // Our actual data to send
-        TWAI.tx_rx_buffer[3].byte = 0x5; // 0101
-        TWAI.command_reg.tr = 1; // Transmission Request
-
-        vTaskDelay(pdMS_TO_TICKS(1000)); // delay of 1s
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        printf("BTR0: 0x%02" PRIx32 " | Status: 0x%02" PRIx32 " | TXERR: %" PRIu32 " | ECC: 0x%02" PRIx32 "\n",
+               TWAI.bus_timing_0_reg.val, TWAI.status_reg.val, TWAI.tx_error_counter_reg.val, TWAI.error_code_capture_reg.val);
     }
 }
