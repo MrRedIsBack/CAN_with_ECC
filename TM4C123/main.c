@@ -1,118 +1,103 @@
-#include <stdint.h>
-#include <stdio.h>
+// TM4C123 (Tiva C LaunchPad) - bare-metal CAN0 receiver
+// PB4 = CAN0RX, PB5 = CAN0TX, 500 kbit/s
+// System clock = 50 MHz (set by SystemInit in startup_TM4C123.s)
+// Receives standard ID 0x2BC into message object 1
+//
+// LEDs:
+//   Blue  (PF2) blinks  -> program is running
+//   Green (PF3) toggles -> received ID 0x2BC with data[0] == 0x05
+
 #include "lm4f120h5qr.h"
+#include <stdint.h>
 
-#define CAN_MODULE0_CLOCK_BIT (1U << 0)
-#define PORT_E_BIT            (1U << 4)
-#define PORT_F_BIT            (1U << 5)
-#define PE4_PE5_MASK          ((1U << 4) | (1U << 5))
+#define CAN0_CLK      (1U)
+#define PORTB_CLK     (1U << 1)
+#define PORTF_CLK     (1U << 5)
+#define PB4_PB5_MASK  ((1U << 4) | (1U << 5))
+#define IF_BUSY       (1U << 15)
 
-#define RED_LED   (1U << 1) // PF1
-#define BLUE_LED  (1U << 2) // PF2
-#define GREEN_LED (1U << 3) // PF3
+#define LED_BLUE      (1U << 2)
+#define LED_GREEN     (1U << 3)
 
+volatile uint32_t rx_id, rx_dlc, rx_count;
 volatile uint8_t  rx_data[8];
-volatile uint16_t rx_id;
-volatile uint8_t  rx_dlc;
-volatile uint32_t rx_count = 0;
-volatile uint32_t matched_idx = 0xFF;
-
-static void Clock_Init_16MHz_PIOSC(void) {
-    SYSCTL_RCC2_R &= ~(1U << 31); // USERCC2 = 0
-    SYSCTL_RCC_R  |= (1U << 11);  // BYPASS = 1
-    SYSCTL_RCC_R  &= ~(1U << 22); // USESYSDIV = 0
-    SYSCTL_RCC_R  &= ~(0x03U << 4);
-    SYSCTL_RCC_R  |= (0x01U << 4); // OSCSRC = 1 (16.0 MHz PIOSC)
-    SYSCTL_RCC_R  |= (1U << 13);   // PWRDN = 1
-    for (volatile int i = 0; i < 10000; i++) {}
-}
-
-static const uint32_t bit_table[] = {
-    (0x01U) | (0x01U << 6) | (0x0BU << 8) | (0x02U << 12), // 0: 500 kbps @ 16 MHz (BRP=1, 16 Tq)
-    (0x00U) | (0x01U << 6) | (0x0BU << 8) | (0x02U << 12), // 1: 1 Mbps @ 16 MHz / 500 kbps @ 8 MHz
-    (0x03U) | (0x01U << 6) | (0x0BU << 8) | (0x02U << 12), // 2: 250 kbps @ 16 MHz / 500 kbps @ 32 MHz
-    (0x01U) | (0x01U << 6) | (0x05U << 8) | (0x00U << 12), // 3: 1 Mbps @ 16 MHz (BRP=1, 8 Tq)
-    (0x04U) | (0x01U << 6) | (0x0FU << 8) | (0x02U << 12), // 4: 500 kbps @ 50 MHz (BRP=4, 20 Tq)
-    (0x09U) | (0x01U << 6) | (0x0BU << 8) | (0x02U << 12), // 5: 500 kbps @ 80 MHz (BRP=9, 16 Tq)
-    (0x07U) | (0x01U << 6) | (0x0FU << 8) | (0x02U << 12), // 6: 500 kbps @ 80 MHz (BRP=7, 20 Tq)
-    (0x04U) | (0x01U << 6) | (0x0BU << 8) | (0x02U << 12)  // 7: 500 kbps @ 40 MHz (BRP=4, 16 Tq)
-};
-#define NUM_BIT_RATES (sizeof(bit_table) / sizeof(bit_table[0]))
-
-static void Apply_Bit_Rate(uint32_t bit_reg_val) {
-    CAN0_CTL_R |= (1U << 0) | (1U << 6) | (1U << 7); // INIT=1, CCE=1, TEST=1
-    for (volatile int d = 0; d < 100; d++) {}        // Wait for CAN clock sync
-    CAN0_BIT_R  = bit_reg_val;
-    CAN0_BRPE_R = 0x00U;
-    CAN0_TST_R  = (1U << 3);                         // SILENT = 1
-    CAN0_STS_R  = 0x07U;                             // Write 0x7 to LEC to set "No Event"
-    CAN0_CTL_R &= ~((1U << 0) | (1U << 6));          // Clear INIT and CCE
-    while (CAN0_CTL_R & (1U << 0)) {}                // Wait until hardware exits INIT!
-}
 
 int main(void) {
-    SYSCTL_RCGCGPIO_R |= (PORT_E_BIT | PORT_F_BIT);
-    while ((SYSCTL_PRGPIO_R & (PORT_E_BIT | PORT_F_BIT)) != (PORT_E_BIT | PORT_F_BIT)) {}
+    // --- Clocks ---
+    SYSCTL_RCGCCAN_R  |= CAN0_CLK;
+    SYSCTL_RCGCGPIO_R |= PORTB_CLK | PORTF_CLK;
+    while ((SYSCTL_PRCAN_R & CAN0_CLK) == 0) {}
+    while ((SYSCTL_PRGPIO_R & (PORTB_CLK | PORTF_CLK)) != (PORTB_CLK | PORTF_CLK)) {}
 
-    GPIO_PORTF_DIR_R |= (RED_LED | BLUE_LED | GREEN_LED);
-    GPIO_PORTF_DEN_R |= (RED_LED | BLUE_LED | GREEN_LED);
-    GPIO_PORTF_DATA_R = RED_LED;
+    // --- LEDs on PF2 (blue) and PF3 (green) ---
+    GPIO_PORTF_DIR_R |= LED_BLUE | LED_GREEN;
+    GPIO_PORTF_DEN_R |= LED_BLUE | LED_GREEN;
 
-    Clock_Init_16MHz_PIOSC();
+    // --- PB4 = CAN0RX, PB5 = CAN0TX (alternate function 8) ---
+    GPIO_PORTB_AMSEL_R &= ~PB4_PB5_MASK;
+    GPIO_PORTB_AFSEL_R |=  PB4_PB5_MASK;
+    GPIO_PORTB_DEN_R   |=  PB4_PB5_MASK;
+    GPIO_PORTB_PCTL_R   = (GPIO_PORTB_PCTL_R & ~((0xFU << 16) | (0xFU << 20)))
+                        | (8U << 16) | (8U << 20);
 
-    SYSCTL_RCGCCAN_R |= CAN_MODULE0_CLOCK_BIT;
-    while ((SYSCTL_PRCAN_R & CAN_MODULE0_CLOCK_BIT) == 0) {}
+    // --- Enter init mode, set bit timing ---
+    CAN0_CTL_R |= (1U << 0) | (1U << 6);      // INIT + CCE
+    CAN0_BIT_R  = 0x2F84;                     // 50 MHz: BRP=5, SJW=3, TSEG1=16, TSEG2=3 -> 500 kbit/s, 85% SP
 
-    GPIO_PORTE_AMSEL_R &= ~PE4_PE5_MASK;
-    GPIO_PORTE_AFSEL_R |=  PE4_PE5_MASK;
-    GPIO_PORTE_PUR_R   |= (1U << 4);
-    GPIO_PORTE_DEN_R   |=  PE4_PE5_MASK;
-    GPIO_PORTE_PCTL_R  &= ~((0xFU << 16) | (0xFU << 20));
-    GPIO_PORTE_PCTL_R  |=  ((8U << 16) | (8U << 20));
+    // --- Invalidate all 32 message objects ---
+    for (uint32_t n = 1; n <= 32; n++) {
+        while (CAN0_IF1CRQ_R & IF_BUSY) {}
+        CAN0_IF1CMSK_R = (1U << 7) | (1U << 5) | (1U << 4); // WRNRD, ARB, CONTROL
+        CAN0_IF1ARB1_R = 0;
+        CAN0_IF1ARB2_R = 0;                   // MSGVAL = 0
+        CAN0_IF1MCTL_R = 0;
+        CAN0_IF1CRQ_R  = n;
+    }
 
-    CAN0_CTL_R |= (1U << 0) | (1U << 6);
-    for (volatile int d = 0; d < 100; d++) {}
+    // --- Message object 1: receive standard ID 0x2BC ---
+    while (CAN0_IF1CRQ_R & IF_BUSY) {}
+    CAN0_IF1CMSK_R = (1U << 7) | (1U << 6) | (1U << 5) | (1U << 4); // WRNRD, MASK, ARB, CONTROL
+    CAN0_IF1MSK1_R = 0;
+    CAN0_IF1MSK2_R = (0x7FFU << 2);           // compare all 11 ID bits
+    CAN0_IF1ARB1_R = 0;
+    CAN0_IF1ARB2_R = (1U << 15) | (0x2BCU << 2); // MSGVAL=1, standard ID, DIR=0 (receive)
+    CAN0_IF1MCTL_R = (1U << 12) | (1U << 7) | 8; // UMASK, EOB, DLC=8
+    CAN0_IF1CRQ_R  = 1;
+    while (CAN0_IF1CRQ_R & IF_BUSY) {}
 
-    while (CAN0_IF1CRQ_R & (1U << 15)) {}
-    CAN0_IF1CMSK_R = (1U << 7) | (1U << 6) | (1U << 5) | (1U << 4);
-    CAN0_IF1MSK1_R = 0x0000U;
-    CAN0_IF1MSK2_R = 0x0000U;
-    CAN0_IF1ARB1_R = 0x0000U;
-    CAN0_IF1ARB2_R = (1U << 15);
-    CAN0_IF1MCTL_R = (1U << 12) | (1U << 7);
-    CAN0_IF1CRQ_R  = 1U;
-    while (CAN0_IF1CRQ_R & (1U << 15)) {}
+    // --- Leave init mode: join the bus ---
+    CAN0_CTL_R &= ~((1U << 0) | (1U << 6));
 
-    uint32_t idx = 0;
-    Apply_Bit_Rate(bit_table[idx]);
+    uint32_t hb = 0;
 
     while (1) {
-        uint32_t sts = CAN0_STS_R;
-        uint32_t lec = sts & 0x07U;
+        // Heartbeat: blue LED blinks while the program runs
+        if (++hb >= 2000000) {
+            hb = 0;
+            GPIO_PORTF_DATA_R ^= LED_BLUE;
+        }
 
-        if ((CAN0_NWDA1_R & (1U << 0)) || (sts & (1U << 4))) {
-            while (CAN0_IF2CRQ_R & (1U << 15)) {}
+        if (CAN0_NWDA1_R & (1U << 0)) {       // object 1 has new data
+            // Read ARB, CONTROL, clear INTPND, clear NEWDAT, data A + B
             CAN0_IF2CMSK_R = (1U << 5) | (1U << 4) | (1U << 3) | (1U << 2) | (1U << 1) | (1U << 0);
-            CAN0_IF2CRQ_R  = 1U;
-            while (CAN0_IF2CRQ_R & (1U << 15)) {}
+            CAN0_IF2CRQ_R  = 1;
+            while (CAN0_IF2CRQ_R & IF_BUSY) {}
 
-            rx_id       = (CAN0_IF2ARB2_R >> 2) & 0x07FFU;
-            rx_dlc      = CAN0_IF2MCTL_R & 0x0FU;
-            rx_data[0]  = (uint8_t)(CAN0_IF2DA1_R & 0xFFU);
+            rx_id  = (CAN0_IF2ARB2_R >> 2) & 0x7FF;
+            rx_dlc =  CAN0_IF2MCTL_R & 0xF;
+
+            uint32_t a1 = CAN0_IF2DA1_R, a2 = CAN0_IF2DA2_R;
+            uint32_t b1 = CAN0_IF2DB1_R, b2 = CAN0_IF2DB2_R;
+            rx_data[0] = a1 & 0xFF;  rx_data[1] = a1 >> 8;
+            rx_data[2] = a2 & 0xFF;  rx_data[3] = a2 >> 8;
+            rx_data[4] = b1 & 0xFF;  rx_data[5] = b1 >> 8;
+            rx_data[6] = b2 & 0xFF;  rx_data[7] = b2 >> 8;
+
             rx_count++;
-            matched_idx = idx;
 
-            GPIO_PORTF_DATA_R = GREEN_LED; // SOLID GREEN = RECEIVED!
-        } else if (lec != 0 && lec != 7 && rx_count == 0) {
-            // Alternate Yellow and Blue on each 1-second pulse so you can SEE it stepping!
-            idx = (idx + 1) % NUM_BIT_RATES;
-            if (idx & 1) {
-                GPIO_PORTF_DATA_R = BLUE_LED;
-            } else {
-                GPIO_PORTF_DATA_R = (RED_LED | GREEN_LED); // Yellow
+            if (rx_id == 0x2BC && rx_data[0] == 0x05) {
+                GPIO_PORTF_DATA_R ^= LED_GREEN;
             }
-            for (volatile int d = 0; d < 200000; d++) {} // Wait ~30ms for current frame to finish
-            Apply_Bit_Rate(bit_table[idx]);
         }
     }
 }
