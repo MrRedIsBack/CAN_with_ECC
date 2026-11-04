@@ -55,8 +55,8 @@ void app_main(void) {
     TWAI.clock_divider_reg.val = (1U << 7) | (1U << 3);
 
     // 5. Bit timing: 80 MHz APB
-    TWAI.bus_timing_0_reg.val = 0x43;  // SJW=2 Tq, BRP=3 -> 10 MHz Tq clock
-    TWAI.bus_timing_1_reg.val = 0x2F;  // SAM=0, TSEG2=3 Tq, TSEG1=16 Tq -> 20 Tq = 500 kbit/s, 85% SP
+    TWAI.bus_timing_0_reg.val = 0x4F;  // SJW=2 Tq, BRP=15 -> 2.5 MHz Tq clock
+    TWAI.bus_timing_1_reg.val = 0x2F;  // SAM=0, TSEG2=3 Tq, TSEG1=16 Tq -> 20 Tq = 125 kbit/s, 85% SP
 
     // 6. Acceptance filter: accept everything
     for (int i = 0; i < 4; i++) {
@@ -68,6 +68,15 @@ void app_main(void) {
     TWAI.mode_reg.val = (1U << 3);
 
     while (1) {
+        // Bus-off recovery: if the controller went bus-off (status bit 7),
+        // clear reset mode so it rejoins the bus by itself
+        if (TWAI.status_reg.val & (1U << 7)) {
+            printf("Bus-off -> recovering\n");
+            TWAI.mode_reg.val = (1U << 3);           // RM=0, AFM=1
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         // If the TX buffer is still locked from a previous attempt, abort it (AT = bit 1)
         if (TWAI.status_reg.tbs == 0) {
             TWAI.command_reg.val = (1U << 1);
